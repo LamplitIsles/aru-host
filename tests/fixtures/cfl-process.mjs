@@ -114,7 +114,6 @@ export async function processAcceptance(entry, directory) {
     upstream.lost = true;
     const input = {
       clientRequestId: "process-images",
-      text: "Synthetic caption",
       attachmentIds: images,
     };
     const first = await request(root + "/messages", "POST", input);
@@ -123,8 +122,17 @@ export async function processAcceptance(entry, directory) {
     assert.equal(upstream.stopCalls, 0);
     await start();
     assert.equal(envelope.serverId, grant.serverId);
-    const recovered = await request(root + "/messages", "POST", input);
-    assert.equal(recovered.submission.state, "submitted");
+    const uploads = upstream.uploadCalls;
+    for (const patch of [{}, { text: null }, { text: '' }]) {
+      const recovered = await request(root + '/messages', 'POST', { ...input, ...patch });
+      assert.equal(recovered.submission.state, 'submitted');
+      assert.equal(recovered.submission.operationId, first.submission.operationId);
+    }
+    assert.equal(upstream.uploadCalls, uploads);
+    for (const text of ['Changed caption', 12, false, {}]) {
+      const response = await fetch(url + root + '/messages', { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' }, body: JSON.stringify({ ...input, text }) });
+      assert.equal(response.status, typeof text === 'string' ? 409 : 400);
+    }
     assert.equal(upstream.submissions, 1);
     const page = await request(root + "/messages");
     const attachments = page.messages.at(-1).attachments;

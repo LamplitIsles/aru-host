@@ -8,6 +8,8 @@ export async function fixture({ images = false } = {}) {
     submissions = 0,
     lost = false,
     stopCalls = 0,
+    uploadCalls = 0,
+    reconnect = null,
     sessionId = "test-session";
   const limits = {
     mediaTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
@@ -102,6 +104,7 @@ export async function fixture({ images = false } = {}) {
           }),
           {
             async upload(input) {
+              uploadCalls++;
               const existing = uploads.get(input.operationId);
               if (existing) return existing;
               const refs = input.images.map((image, i) => {
@@ -153,7 +156,10 @@ export async function fixture({ images = false } = {}) {
   });
   const wss = new WebSocketServer({ server });
   wss.on("connection", (ws) => {
-    const channel = chat.connect(ws, async () => true);
+    const channel = chat.connect(ws, async () => {
+      if (reconnect) { const gate = reconnect; gate.entered.resolve(); await gate.released.promise; }
+      return true;
+    });
     ws.on("message", (data) => channel.receive(String(data)));
     ws.on("close", () => channel.close());
   });
@@ -161,6 +167,11 @@ export async function fixture({ images = false } = {}) {
   await once(server, "listening");
   return {
     origin: `http://127.0.0.1:${server.address().port}`,
+    holdReconnect() {
+      const gate = { entered: Promise.withResolvers(), released: Promise.withResolvers() }; reconnect = gate;
+      return { entered: gate.entered.promise, release() { reconnect = null; gate.released.resolve(); } };
+    },
+    get uploadCalls() { return uploadCalls; },
     get uploaded() {
       return [...media.values()];
     },

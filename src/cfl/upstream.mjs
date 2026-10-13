@@ -141,9 +141,19 @@ export function createUpstream({
       await ready();
       return client.submit(input);
     },
-    async stop(id) {
-      await ready();
-      return client.stop(id);
+    async stop(id, authorize) {
+      try {
+        await ready();
+      } catch {
+        return { stopped: false };
+      }
+      // Reconnect may have awaited again; authorize synchronously at the RPC boundary.
+      authorize();
+      try {
+        return await client.stop(id);
+      } catch {
+        return { stopped: false };
+      }
     },
     async appearance() {
       return validateChatAppearance(

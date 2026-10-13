@@ -43,7 +43,7 @@ also available to an authenticated paired phone. Repeated revoke is idempotent.
 | `GET .../:collaboratorId/conversations`; `GET .../:conversationId` | device Bearer | one bound native conversation, recent completed messages |
 | `GET .../:conversationId/messages?before=ID` | device Bearer | previous CFL page, stable anchor and order |
 | `GET .../events?after=N`; `GET .../sync?after=N&version=TOKEN` | device Bearer | ordered polling projections, conditional response/reset |
-| `POST .../messages` | device Bearer | `{clientRequestId,text,attachmentIds?}`; CFL admission or unknown receipt |
+| `POST .../messages` | device Bearer | `{clientRequestId,text?,attachmentIds?}`; CFL admission or unknown receipt |
 | `POST .../turns/:turnId/cancel` | device Bearer | stop that mapped native turn only; unconfirmed result remains retryable |
 | `POST .../attachments` | device Bearer | `{clientUploadId,kind:"image",filename,mimeType,byteCount,sha256}` admission |
 | `PUT .../attachments/:id/content`; `GET .../attachments/:id/content` | device Bearer | stage verified original / read staged or CFL original |
@@ -55,6 +55,10 @@ create, delete or archive companions/conversations. `approvalMode: always_allow`
 is the Aru wire representation of CFL's `approvalPolicy: never`. Tool access is
 upstream-owned, uneditable and unprotected by phone confirmation; this adapter
 has no local MCP tool catalog or additional tool permission enforcement.
+
+Image-only requests may omit `text` or supply `null`/`""`; these normalize to the
+same empty text before validation, fingerprinting and submission. Other non-string
+text values are rejected.
 
 Request identity is scoped to the paired device, preserved through restart and
 mapped to a durable UUID. Identical repeated inputs only call lookup; changed input

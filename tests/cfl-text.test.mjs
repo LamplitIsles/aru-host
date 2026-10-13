@@ -286,3 +286,42 @@ test("expired pairing, corrupt state and changed upstream session fail without r
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('revocation while outer or stop-internal reconnect waits prevents every stop effect', async () => {
+  for (const inner of [false, true]) {
+    const directory = mkdtempSync(join(tmpdir(), 'aru-cfl-stop-revoke-'));
+    const f = await fixture(), state = openState(directory);
+    const host = createHost({ state, origin: f.origin, baseUrl: 'http://127.0.0.1:8787' });
+    host.server.listen(0, '127.0.0.1'); await once(host.server, 'listening');
+    const url = `http://127.0.0.1:${host.server.address().port}`;
+    const post = (path, value, credential) => fetch(url + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${credential ?? ''}` }, body: JSON.stringify(value) });
+    const pair = async () => (await (await post('/aru/v1/pair', { pairingToken: issuePairing(state).token })).json());
+    let gate;
+    try {
+      const sender = await pair(), revoker = await pair();
+      const root = `/aru/v1/hosted-collaborators/${state.identity.collaboratorId}/conversations/${state.identity.conversationId}`;
+      assert.equal((await post(root + '/messages', { clientRequestId: 'held-stop', text: 'Synthetic held turn' }, sender.credentialSecret)).status, 202);
+      let turn;
+      while (!turn) turn = (await (await fetch(url + root, { headers: { authorization: `Bearer ${sender.credentialSecret}` } })).json()).activeTurn?.turnId;
+      const ready = host.upstream.ready, entered = Promise.withResolvers();
+      const disconnect = async () => { gate = f.holdReconnect(); f.disconnect(); while (host.upstream.status.available) await new Promise(setImmediate); };
+      if (!inner) await disconnect();
+      host.upstream.ready = async () => {
+        entered.resolve();
+        if (!inner) return ready();
+        const view = await ready(); await disconnect(); return view;
+      };
+      const cancel = post(root + `/turns/${turn}/cancel`, {}, sender.credentialSecret);
+      await entered.promise;
+      while (!gate) await new Promise(setImmediate);
+      await gate.entered;
+      assert.equal((await post('/aru/v1/devices/revoke', { deviceId: sender.deviceId }, revoker.credentialSecret)).status, 200);
+      gate.release();
+      const response = await cancel;
+      assert.equal(response.status, 403);
+      assert.equal((await response.json()).error.code, 'credential.revoked');
+      assert.equal(f.stopCalls, 0, inner ? 'stop-internal readiness' : 'outer readiness');
+      assert.equal(state.get('cancellation:' + turn), null);
+    } finally { gate?.release(); await host.close(); state.close(); await f.close(); rmSync(directory, { recursive: true, force: true }); }
+  }
+});

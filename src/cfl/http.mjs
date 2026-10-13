@@ -136,6 +136,7 @@ export function createHost({
   }
   async function send(req, device) {
     const input = await body(req, 256 * 1024);
+    input.text ??= "";
     if (
       Object.keys(input).some(
         (key) => !["text", "clientRequestId", "attachmentIds"].includes(key),
@@ -353,10 +354,10 @@ export function createHost({
         if (cancel && req.method === "POST") {
           const turnId = cancel[1],
             native = projection.nativeTurn(turnId);
-          let stopped = false;
-          try {
-            stopped = (await upstream.stop(native)).stopped;
-          } catch {}
+          authenticate(state, req);
+          const stopped = (
+            await upstream.stop(native, () => authenticate(state, req))
+          ).stopped;
           const cancellation = {
             status: stopped ? "confirmed" : "failed",
             message: stopped

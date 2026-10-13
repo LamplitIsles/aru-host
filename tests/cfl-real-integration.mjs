@@ -151,12 +151,22 @@ test(
           true,
         );
       }
+      let uploadCalls = 0;
+      const upload = fixture.partner.uploadImages.bind(fixture.partner);
+      fixture.partner.uploadImages = (...args) => { uploadCalls++; return upload(...args); };
       const first = await request(root + "/messages", "POST", {
         clientRequestId: "images-only",
-        text: "",
         attachmentIds: ids,
       });
       assert.equal(first.submission.state, "submitted");
+      const submitCalls = (await fixture.action({ action: 'state' })).submitCalls;
+      for (const text of [null, '']) {
+        const repeated = await request(root + '/messages', 'POST', { clientRequestId: 'images-only', text, attachmentIds: ids });
+        assert.equal(repeated.submission.operationId, first.submission.operationId);
+        assert.equal(repeated.submission.state, 'submitted');
+      }
+      assert.equal(uploadCalls, 1);
+      assert.equal((await fixture.action({ action: 'state' })).submitCalls, submitCalls);
       await eventually(async () =>
         (await fixture.action({ action: "state" })).messages.some(
           (m) => m.images?.length === 4,
