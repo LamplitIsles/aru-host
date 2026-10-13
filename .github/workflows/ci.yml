@@ -1,100 +1,36 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
-  host-core:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - name: Host and installer smoke tests
-        run: |
-          node --test tests/*.test.mjs
-          node tests/provider-cli-smoke.mjs
-          bash tests/local-operator-smoke.sh
-          node --test tests/runtime-truth.test.mjs tests/turn-cancellation.test.mjs tests/codex-cancellation.test.mjs
-          node tools/build-runtime.mjs --check
-          node --test tests/project-async.test.mjs tests/legacy-installer-upgrade.test.mjs
-          node --test tests/state-save.test.mjs
-          node tests/state-startup-smoke.mjs
-          node --test tests/driver-launch.test.mjs
-          node tests/mobile-collaborator-identity-smoke.mjs
-          node tests/windows-secret-store-smoke.mjs
-          bash tests/http-smoke.sh
-          bash tests/installer-smoke.sh
-          node tests/apns-push-smoke.mjs
-          node tests/wake-bridge-smoke.mjs
-          node tests/wake-send-smoke.mjs
-          node tests/codex-app-server-driver-smoke.mjs
-          node tests/claude-code-driver-smoke.mjs
-          node --test tests/claude-code-command.test.mjs
-          node tests/collaborator-host-smoke.mjs
-          node tests/collaborator-cognition-smoke.mjs
-          node tests/collaborator-conversation-smoke.mjs
-          node tests/collaborator-initiative-smoke.mjs
-          node tests/collaborator-project-smoke.mjs
-          node tests/mobile-collaborator-replicas.test.mjs
-          node tests/direct-api-driver-smoke.mjs
-          node tests/provider-profiles-smoke.mjs
-          node tests/conversation-turn-relay.test.mjs
-          bash tests/plugin-supervisor-smoke.sh
-      - name: Verify real container setup and old payload compatibility
-        run: |
-          node tests/container-runtime-real-smoke.mjs
-          node tests/legacy-payload-smoke.mjs
-      - name: Build Linux release payload
-        run: ./package-release.sh dist/aru-host-linux.tar.gz
-
-  macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, macos-26]
-    runs-on: ${{ matrix.os }}
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
-    steps:
-      - uses: actions/checkout@v7
-      - name: Host installer smoke test
-        run: bash tests/macos-installer-smoke.sh
-      - name: Console tests (including native surface rendering)
-        run: swift test --package-path macos-console
-      - name: Verify minimum deployment target
-        run: |
-          binary="$(swift build --package-path macos-console --show-bin-path)/AruHostConsole"
-          xcrun vtool -show-build "$binary" | tee /tmp/aru-console-build-version.txt
-          grep -Eq 'minos[[:space:]]+15\.0' /tmp/aru-console-build-version.txt
-      - name: Build macOS Host Core payload
-        run: ./package-macos-release.sh dist/aru-host-macos.tar.gz
-
-  linux-desktop:
+  cfl-host:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: desktop-console/package-lock.json
-      - name: Verify current-user installer and Console
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: node tools/build-runtime.mjs --check
+      - name: Build and extract Linux package
         run: |
-          npm ci --prefix desktop-console
-          npm audit --prefix desktop-console --omit=dev
-          bash tests/linux-desktop-installer-smoke.sh
-          npm test --prefix desktop-console
-      - name: Build, inspect, and install x64 desktop package
-        run: |
-          version="$(node -p 'require("./desktop-console/package.json").version')"
-          ./package-linux-desktop.sh --version "$version" --arch x64 --output-dir dist
-          sudo apt-get update
-          sudo apt-get install -y "./dist/aru-host-linux-$version-x64.deb"
-          test "$(dpkg-query -W -f='${Version}' aru-host)" = "$version"
+          ./package-release.sh "$RUNNER_TEMP/aru-cfl-host-linux.tar.gz"
+          mkdir "$RUNNER_TEMP/cfl-package"
+          tar -xzf "$RUNNER_TEMP/aru-cfl-host-linux.tar.gz" -C "$RUNNER_TEMP/cfl-package"
+      - name: Self-contained public Chord/HTTP faults and source/package processes
+        env:
+          CFL_TEST_PACKAGE: ${{ runner.temp }}/cfl-package
+        run: node --test tests/cfl-*.test.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aru-cfl-host-linux
+          path: |
+            ${{ runner.temp }}/aru-cfl-host-linux.tar.gz
+            ${{ runner.temp }}/aru-cfl-host-linux.tar.gz.sha256

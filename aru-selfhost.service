@@ -1,38 +1,15 @@
 [Unit]
-Description=Aru self-hosted capability node
-Documentation=https://github.com/Aevella/aru-host
-After=network-online.target
-Wants=network-online.target
+Description=CFL Aru HTTP access node
+After=network.target
 
 [Service]
 Type=simple
-User=aru-selfhost
-Group=aru-selfhost
-Environment=HOME=/var/lib/aru-selfhost
-Environment=XDG_RUNTIME_DIR=/run/aru-selfhost
-Environment=TMPDIR=/var/lib/aru-selfhost/tmp
-Environment=CONTAINERS_CONF=/etc/aru-selfhost/containers.conf
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/libexec/podman:/usr/libexec/catatonit
-Environment=ARU_SELFHOST_CONFIG_FILE=/etc/aru-selfhost/node.env
-ExecStart=/opt/aru-selfhost/current/run-node.sh
+# Run as the operator-selected CFL service owner; set paths in a local override.
+ExecStart=/opt/aru-cfl/current/run-node.sh --data-dir /var/lib/aru-cfl --cfl-origin http://127.0.0.1:3082 --base-url http://127.0.0.1:8787
+UMask=0077
 Restart=on-failure
 RestartSec=3
-RestartPreventExitStatus=78
-TimeoutStopSec=30
-RuntimeDirectory=aru-selfhost
-RuntimeDirectoryMode=0700
-StateDirectory=aru-selfhost
-StateDirectoryMode=0700
-UMask=0077
-Delegate=yes
-ProtectSystem=full
-ProtectHome=true
-PrivateTmp=false
-PrivateDevices=false
-RestrictSUIDSGID=false
-LockPersonality=true
-RestrictRealtime=true
-SystemCallArchitectures=native
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target

@@ -9,3 +9,5 @@ dist/
 *.tar.gz.sha256
 *.log
 state.json
+
+.scratch/

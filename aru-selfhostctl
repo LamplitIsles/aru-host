@@ -1,291 +1,32 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-readonly CONFIG_DIR="${ARU_SELFHOST_CONFIG_DIR:-/etc/aru-selfhost}"
-readonly INSTALL_ENV="$CONFIG_DIR/install.env"
-readonly NODE_ENV="$CONFIG_DIR/node.env"
-readonly SERVICE="aru-selfhost.service"
-
-die() {
-  echo "aru-selfhost: $*" >&2
-  exit 1
+#!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { openState, issuePairing } from "./src/cfl/state.mjs";
+const [command, directory, id] = process.argv.slice(2);
+if (!directory)
+  throw new Error(
+    "Usage: aru-selfhostctl pairing|devices|revoke DATA_DIR [DEVICE_ID]",
+  );
+const state = openState(resolve(directory));
+try {
+  if (command === "pairing") console.log(JSON.stringify(issuePairing(state)));
+  else if (command === "devices")
+    console.log(
+      JSON.stringify(
+        state.get("devices").map(({ credentialSHA256: _, ...d }) => d),
+      ),
+    );
+  else if (command === "revoke") {
+    const devices = state.get("devices"),
+      device = devices.find((d) => d.deviceId === id);
+    if (!device) throw Error("Unknown device");
+    device.revokedAt ??= Date.now();
+    state.put("devices", devices);
+    console.log("Device revoked");
+  } else
+    throw new Error(
+      "Unsupported command; updates require an explicit fork package",
+    );
+} finally {
+  state.close();
 }
-
-# Retry, and abandon a stalled transfer rather than hang: GitHub can be
-# reachable but very slow from some networks.
-download() {
-  curl --fail --silent --show-error --location --connect-timeout 20 \
-    --speed-limit 1024 --speed-time 60 --retry 4 --retry-delay 2 --retry-all-errors "$@"
-}
-
-need_root() {
-  [[ ${EUID:-$(id -u)} -eq 0 ]] || die "this command needs sudo"
-}
-
-load_install_config() {
-  [[ -r "$INSTALL_ENV" ]] || die "installation record missing: $INSTALL_ENV"
-  # install.env contains only shell-escaped, non-secret installer choices.
-  # shellcheck disable=SC1090
-  source "$INSTALL_ENV"
-}
-
-load_node_config() {
-  [[ -r "$NODE_ENV" ]] || die "node config missing: $NODE_ENV"
-  # node.env is root-owned and written by install.sh.
-  # shellcheck disable=SC1090
-  source "$NODE_ENV"
-}
-
-usage() {
-  cat <<'EOF'
-Usage: aru-selfhost <command>
-
-  status                 Show service state and installed release.
-  pairing                Restart the node and print a fresh 10-minute pairing link.
-  doctor                 Check service, container runtime, manifest, and capabilities.
-  provider <command>     Manage model API profiles from this VPS only.
-  logs [journal args]    Follow service logs; secrets appear only in the fresh boot block.
-  upgrade [--ref REF]    Install the latest stable release; --ref selects this run only.
-  reset-provider-keys    Retire saved VPS API keys; keep profiles and conversations.
-  rollback               Switch to the previous installed release and restart.
-  uninstall              Remove program files but preserve encrypted vault data.
-  uninstall --purge-data Remove program files and durable server data.
-EOF
-}
-
-provider_command() {
-  need_root
-  load_node_config
-  local cli="/opt/aru-selfhost/current/provider-cli.mjs"
-  [[ -x "$cli" ]] || die "provider manager is missing from the installed release"
-  [[ -r "${ARU_LOCAL_OPERATOR_CREDENTIAL_FILE:-}" ]] \
-    || die "local operator credential is missing; rerun the installer to repair it"
-  systemctl is-active --quiet "$SERVICE" \
-    || die "Host service is not active; start or repair it before managing providers"
-  exec env \
-    ARU_SELFHOST_CLI_BASE_URL="http://127.0.0.1:${ARU_PORT}" \
-    ARU_LOCAL_OPERATOR_CREDENTIAL_FILE="$ARU_LOCAL_OPERATOR_CREDENTIAL_FILE" \
-    "${ARU_NODE_BINARY:-/usr/bin/node}" "$cli" "$@"
-}
-
-installed_release() {
-  local target
-  target="$(readlink /opt/aru-selfhost/current 2>/dev/null || true)"
-  printf '%s\n' "${target##*/}"
-}
-
-status_command() {
-  echo "release: $(installed_release)"
-  systemctl --no-pager --full status "$SERVICE"
-}
-
-pairing_command() {
-  need_root
-  local since output url
-  since="$(date --iso-8601=seconds)"
-  systemctl restart "$SERVICE"
-  for _ in {1..20}; do
-    output="$(journalctl -u "$SERVICE" --since "$since" --no-pager -o cat 2>/dev/null || true)"
-    url="$(printf '%s\n' "$output" | grep -E '^aru://pair\?' | tail -1 || true)"
-    if [[ -n "$url" ]]; then
-      echo "$url"
-      echo "Single use; expires in 10 minutes. The next restart invalidates it."
-      return
-    fi
-    sleep 0.25
-  done
-  die "node started but no pairing link appeared; run /usr/local/bin/aru-selfhost logs"
-}
-
-doctor_command() {
-  need_root
-  load_node_config
-  local failed="false" manifest
-  echo "release: $(installed_release)"
-  if systemctl is-active --quiet "$SERVICE"; then
-    echo "service: active"
-  else
-    echo "service: inactive"
-    failed="true"
-  fi
-  if command -v "${ARU_NODE_BINARY:-node}" >/dev/null 2>&1; then
-    echo "node: $("${ARU_NODE_BINARY:-node}" --version)"
-  else
-    echo "node: missing"
-    failed="true"
-  fi
-  if command -v "${ARU_CONTAINER_RUNTIME:-podman}" >/dev/null 2>&1; then
-    echo "container: $("${ARU_CONTAINER_RUNTIME:-podman}" --version | head -1)"
-    local runtime_env=(
-      env
-      HOME=/var/lib/aru-selfhost
-      XDG_RUNTIME_DIR=/run/aru-selfhost
-      CONTAINERS_CONF=/etc/aru-selfhost/containers.conf
-      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/libexec/podman:/usr/libexec/catatonit
-    )
-    if ! (
-      cd /var/lib/aru-selfhost
-      runuser -u aru-selfhost -- "${runtime_env[@]}" "${ARU_CONTAINER_RUNTIME:-podman}" info >/dev/null
-    ); then
-      echo "container preflight: failed for service user"
-      failed="true"
-    else
-      local image
-      for image in "${ARU_NODE_IMAGE:-}" "${ARU_PYTHON_IMAGE:-}" "${ARU_SHELL_IMAGE:-}"; do
-        [[ -n "$image" ]] || continue
-        if (
-          cd /var/lib/aru-selfhost
-          runuser -u aru-selfhost -- "${runtime_env[@]}" "${ARU_CONTAINER_RUNTIME:-podman}" image exists "$image"
-        ); then
-          echo "runtime image: ready ($image)"
-        else
-          echo "runtime image: missing ($image)"
-          failed="true"
-        fi
-      done
-    fi
-  else
-    echo "container: missing"
-    failed="true"
-  fi
-  if manifest="$(curl -fsS "http://127.0.0.1:${ARU_PORT}/.well-known/aru.json" 2>/dev/null)"; then
-    printf '%s' "$manifest" | "${ARU_NODE_BINARY:-node}" -e '
-      let body=""; process.stdin.on("data", c => body += c); process.stdin.on("end", () => {
-        const m=JSON.parse(body);
-        console.log(`manifest: ok (${m.serverId})`);
-        for (const [id, value] of Object.entries(m.capabilities ?? {})) {
-          console.log(`capability ${id}: ${value.enabled === true ? "enabled" : "disabled"}`);
-        }
-      });'
-  else
-    echo "manifest: unreachable on local service port"
-    failed="true"
-  fi
-  [[ "$failed" == "false" ]] || exit 1
-}
-
-upgrade_command() {
-  need_root
-  load_install_config
-  local ref=""
-  local explicit_ref="false"
-  if [[ "${1:-}" == "--ref" ]]; then
-    ref="${2:?missing value for --ref}"
-    explicit_ref="true"
-    shift 2
-  fi
-  (($# == 0)) || die "unknown upgrade arguments: $*"
-
-  if [[ "$explicit_ref" == "false" ]]; then
-    ref="$(download https://api.github.com/repos/Aevella/aru-host/releases/latest | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const r=JSON.parse(s);if(r.draft||r.prerelease||!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(r.tag_name))process.exit(1);process.stdout.write(r.tag_name)})')" || die "could not resolve the latest stable release; installation unchanged"
-  fi
-  [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ && "$ref" != *..* ]] || die "invalid source ref"
-  local temporary installer
-  temporary="$(mktemp -d)"
-  installer="$temporary/install.sh"
-  download "https://raw.githubusercontent.com/Aevella/aru-host/$ref/install.sh" -o "$installer" || { rm -rf "$temporary"; die "could not download target installer; installation unchanged"; }
-
-  local args=(
-    --profile "${ARU_INSTALL_PROFILE:-full}"
-    --display-name "${ARU_INSTALL_DISPLAY_NAME:-Aru Self-Hosted}"
-    --port "${ARU_INSTALL_PORT:-8787}"
-    --node-image "${ARU_INSTALL_NODE_IMAGE:-docker.io/library/node:22-alpine}"
-    --python-image "${ARU_INSTALL_PYTHON_IMAGE:-docker.io/library/python:3.13-alpine}"
-    --shell-image "${ARU_INSTALL_SHELL_IMAGE:-docker.io/library/alpine:3.22}"
-  )
-  if [[ -n "${ARU_INSTALL_DOMAIN:-}" ]]; then
-    args+=(--domain "$ARU_INSTALL_DOMAIN")
-  else
-    args+=(--base-url "$ARU_INSTALL_BASE_URL" --transport-kind "$ARU_INSTALL_TRANSPORT_KIND")
-  fi
-  [[ "${ARU_INSTALL_SKIP_CADDY:-false}" == "true" ]] && args+=(--skip-caddy)
-  [[ "${ARU_INSTALL_SKIP_FIREWALL:-false}" == "true" ]] && args+=(--skip-firewall)
-  args+=(--source-ref "$ref")
-  local result=0
-  bash "$installer" "${args[@]}" || result=$?
-  rm -rf "$temporary"
-  return "$result"
-}
-
-reset_provider_keys_command() {
-  (($# == 0)) || die "unknown reset-provider-keys arguments: $*"
-  need_root
-  load_node_config
-  [[ -n "${ARU_PROVIDER_SECRET_ROOT:-}" ]] || die "this installation does not use the VPS service key store"
-  systemctl stop "$SERVICE"
-  runuser -u aru-selfhost -- "${ARU_NODE_BINARY:-node}" --input-type=module - "$ARU_PROVIDER_SECRET_ROOT" <<'NODE'
-import { mkdirSync, writeFileSync, renameSync, existsSync, lstatSync } from 'node:fs';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-const root = process.argv[2];
-if (existsSync(root) && lstatSync(root).isSymbolicLink()) throw Error('Secret directory cannot be a symlink');
-const next = root + '.new-' + randomUUID();
-mkdirSync(next, {mode:0o700});
-writeFileSync(join(next,'master.key'),randomBytes(32),{flag:'wx',mode:0o600});
-writeFileSync(join(next,'legacy-import-complete'),'1\n',{flag:'wx',mode:0o600});
-if(existsSync(root))renameSync(root,root + '.retired-' + Date.now());
-renameSync(next,root);
-NODE
-  systemctl restart "$SERVICE"
-  echo "Provider key storage reset. Re-enter keys in existing model profiles; collaborators and conversations were preserved. Retired encrypted storage remains beside the active directory for deliberate recovery/cleanup."
-}
-
-rollback_command() {
-  need_root
-  local current previous
-  current="$(readlink /opt/aru-selfhost/current 2>/dev/null || true)"
-  previous="$(readlink /opt/aru-selfhost/previous 2>/dev/null || true)"
-  [[ -n "$current" && -n "$previous" ]] || die "no previous release is installed"
-  load_node_config
-  if [[ -d "$ARU_DATA_DIR/mobile-collaborator-replicas/records-v2" ]]; then
-    "${ARU_NODE_BINARY:-node}" --input-type=module - "/opt/aru-selfhost/$previous/mobile-collaborator-replicas.mjs" <<'NODE' || die "previous release cannot read migrated execution records; current release unchanged"
-import { pathToFileURL } from 'node:url';
-const module = await import(pathToFileURL(process.argv[2]));
-if (module.replicaStorageVersion !== 2) process.exit(1);
-NODE
-  fi
-  runuser -u aru-selfhost -- "${ARU_NODE_BINARY:-node}" "/opt/aru-selfhost/$previous/server.mjs" --data-dir "$ARU_DATA_DIR" --container-runtime none --check-state || die "previous release cannot read current data; current release unchanged"
-  if [[ -n "${ARU_PROVIDER_SECRET_ROOT:-}" ]]; then
-    "${ARU_NODE_BINARY:-node}" --input-type=module - "/opt/aru-selfhost/$previous/provider-secret-store.mjs" "$ARU_PROVIDER_SECRET_ROOT" <<'NODE' || die "previous release cannot use current provider credentials; current release unchanged"
-import { pathToFileURL } from 'node:url';
-import { readdirSync } from 'node:fs';
-if (readdirSync(process.argv[3]).some(x=>x.endsWith('.sealed'))) {
-  const m = await import(pathToFileURL(process.argv[2]));
-  const s = m.createProviderSecretStore({platform:'linux',env:{ARU_PROVIDER_SECRET_ROOT:process.argv[3]}});
-  if(s.availability().storage!=='linux-service-encrypted-file')process.exit(1);
-}
-NODE
-  fi
-  ln -sfn "$current" /opt/aru-selfhost/previous
-  ln -sfn "$previous" /opt/aru-selfhost/current
-  systemctl restart "$SERVICE"
-  echo "rolled back to ${previous##*/}"
-}
-
-uninstall_command() {
-  need_root
-  local args=(--uninstall)
-  [[ "${1:-}" == "--purge-data" ]] && args+=(--purge-data) && shift
-  (($# == 0)) || die "unknown uninstall arguments: $*"
-  [[ -x /opt/aru-selfhost/current/install.sh ]] || die "installed uninstaller is missing"
-  /opt/aru-selfhost/current/install.sh "${args[@]}"
-}
-
-[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
-
-command_name="${1:-}"
-[[ -n "$command_name" ]] || { usage; exit 1; }
-shift
-case "$command_name" in
-  status) status_command "$@" ;;
-  pairing) pairing_command "$@" ;;
-  doctor) doctor_command "$@" ;;
-  provider) provider_command "$@" ;;
-  logs) exec journalctl -u "$SERVICE" -f "$@" ;;
-  upgrade) upgrade_command "$@" ;;
-  reset-provider-keys) reset_provider_keys_command "$@" ;;
-  rollback) rollback_command "$@" ;;
-  uninstall) uninstall_command "$@" ;;
-  help|--help|-h) usage ;;
-  *) usage; die "unknown command: $command_name" ;;
-esac

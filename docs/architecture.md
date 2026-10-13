@@ -1,267 +1,45 @@
-# Architecture boundary
+# CFL Aru access architecture
 
-Installation and execution lifecycle changes follow [HOST-LIFECYCLE.md](../HOST-LIFECYCLE.md).
+Aru phones use the original Host HTTP/JSON pairing, collaborator/conversation,
+attachment and cursor-polling shapes. `src/cfl/http.mjs` translates intents and
+read projections through the pinned `@lamplit/contracts/client` Chord WebSocket
+and CFL's public image HTTP API. CFL uses its existing official app-server.
+No extra driver, conversation ledger, model process or execution queue is started.
 
-Aru Host has three one-way responsibilities:
+- `state.mjs`: SQLite node identity, device hashes/revocation, request UUID and
+  fingerprint, actual receipts. Atomic durable admission precedes external effects.
+- `upstream.mjs`: loopback origin validation, public contract connection/subscription,
+  session binding, reconnect, appearance and authenticated internal resource reads.
+- `projection.mjs`: stable hashed phone IDs, native ID mappings, history anchors and
+  ordered positions. Current chat/event bodies live only in a rebuildable memory
+  projection. Restart changes the sync epoch and requires a recent-window reset.
+- `images.mjs`: hash-checked device staging; sharp decode and first-frame JPEG
+  preview/model variants; operation-bound CFL upload; authenticated original reads.
+  CFL originals are the content authority after upload. Original animation is retained.
+- `cli.mjs`: Node 24 entrypoint, explicit paths/origins and optional local header file.
+  It prints a single-use pairing envelope/link, then subscribes to the existing session.
 
-1. **Host Core** owns paired identities, computer-hosted collaborators, durable conversations, cognition, approvals, proactive rules, page projects, pages, jobs, plugins and artifacts.
-2. **Agent drivers** adapt Codex or a user-selected model API into the Host turn and event contract. A driver session is a runtime receipt, never collaborator identity.
-3. **Clients and Console** render authenticated projections and send intents. Closing a client does not move authority or delete Host state.
+Read history through CFL's opaque cursor anchored to a phone message ID; paged
+rows preserve timestamps, per-bubble identity and source metadata. Reminder,
+Matrix and Keet inputs retain labelled origin. CFL completion is distinct from
+admission; active assistant placeholders or token streaming are not invented.
+The required active-turn message reference may be empty until CFL exposes a row.
 
-The iPhone remains authoritative for its local collaborators. A computer-hosted collaborator remains authoritative on the paired Host. The two roots can appear together in Aru without sharing a database or silently changing ownership. A phone-owned collaborator may publish a bounded, epoch-scoped, read-only execution replica for Host proactive turns; stable delivery ids return the result to the phone, while append-versus-branch is decided against the phone-supplied conversation head.
+The adapter stores metadata and temporary image bytes, not model history or a
+second authoritative chat. The OS service owner protects the database/header file;
+phone credentials and bootstrap tokens are never forwarded to CFL. Requests do
+not accept upstream origins, native session selection or local filesystem paths.
+All internal HTTP fetches reject redirects. Public routes expose no CFL secrets.
 
-Local Aru workspace data is not mirrored into a second live workspace. Remote jobs use Host-owned execution state and return text changes or hash-verified artifacts through explicit publication flows.
+`vendor/lamplit-contracts` is the unchanged public package source at the actual
+CFL App pin, including its Apache license. `bun run build` compiles it and prepares
+the dependency copy. Packaging delivers modular runtime, compiled contracts and
+production dependencies, including sharp for the builder's OS/architecture.
+CI builds Linux and tests the extracted artifact with self-contained public contract fixtures.
+Real CFL/native integration is a separate local test-owned fixture command.
+No adjacent checkout is a deployed runtime dependency.
 
-Proactive scheduling is separate from conversation execution: a due rule persists its attempt first and then opens a normal Host turn. APNs delivery is downstream of a durably completed proactive turn, and each paired phone owns a separate registration that stops being eligible when the device is revoked.
-
-External wake is a separate encrypted mailbox, not Host conversation ownership. Each phone-created trigger owns endpoint-scoped fetch and submit credentials; Host admits bounded idempotent ciphertext and receives only an anonymous route id plus a route-scoped wake token. The official minimal relay alone owns the APNs provider key and device-token address, receives no ciphertext or product target, and sends only a generic wake hint. Host deletes settled rows after the phone decrypts and commits the event to its own SQLite truth. The sender bundle cannot choose a collaborator, conversation, or system role.
-
-A page project binds one Host-managed collaborator workspace to an optional Git checkout, immutable artifact checkpoints, and at most one published phone surface. Phone and Console inspect the same checkout. Saving a checkpoint, publishing a phone release, and pushing Git commits are deliberately separate actions; none creates a second phone-side repository.
-
-Third-party plugins are separate permissioned lifecycle units. The official `full` profile installs the Host substrate and implemented official capability bundles; it does not silently install or grant arbitrary third-party code.
-
-## Runtime source and installed payloads
-
-All root runtime `.mjs` files are generated deployment payloads. Handwritten runtime
-code lives under `src/`; `tools/build-runtime.mjs` assembles modular owners and emits
-fixed entrypoints listed in `tools/runtime-entries.json`. That list records each
-entrypoint's source. Imports in emitted entrypoint sources resolve from the installed
-payload root, including `import.meta.url` resource lookups. Edit the listed source,
-then regenerate; CI rejects stale output. Root `bundle-*.mjs` files are build tools.
-Released upgraders copy fixed filenames, so moving source never adds a new installed
-runtime dependency. Aru consumes an exact repository revision rather than maintaining
-a second implementation.
-
-| Source | Responsibility |
-| --- | --- |
-| `src/server/server.mjs` | Configuration, dependency assembly, pairing, authenticated routing and diagnostics |
-| `src/server/state-store.mjs` | State admission, last-good backup and atomic writes |
-| `src/server/backup-vault.mjs` | Encrypted backup upload validation, metadata, download and deletion |
-| `src/server/artifact-vault.mjs` | Artifact publication, integrity and removal |
-| `src/server/workspace-jobs.mjs` | Container job execution, deadlines, cancellation and restart recovery |
-| `src/server/mcp-catalog.mjs` | Static tool schemas |
-| `src/server/mcp-gateway.mjs` | MCP sessions, argument admission and dispatch to domain owners |
-| `src/conversations/` | Computer conversation execution and revision-checked rename/deletion; active turns cannot be deleted |
-| `src/conversation-relay/` | Phone-owned turn routing, provider admission and raw response files |
-
-Backup, artifact and job owners receive only their relevant state collections;
-`state.json` keeps its existing format and one write authority. Persistence is
-still synchronous and writes a complete snapshot: this restructuring is not a
-storage migration or a claim of measured large-dataset performance.
-
-`collaborator-host.mjs` projects current driver availability without conversation
-statistics. The public unauthenticated manifest, authenticated diagnostics and
-agent-driver inventory do not read conversation history or attachment directories.
-The unused aggregate conversation, active-turn and pending-approval counts and
-full-history status outlet have been removed. Per-conversation projections keep
-their own pending-approval counts for actual conversation UI consumers.
-
-Project Git and archive subprocesses are asynchronous. Checkpoint creation
-rechecks the project's revision after awaiting compression and before publishing
-an artifact; another request's archive or update cannot be overwritten by the
-old attempt. The project remains the authority for its own revision.
-
-The macOS Console's `HostConsoleConversations` and `HostConsoleSurfaces` own
-surface-specific projections and mutation admission. The connection supplies
-an authenticated byte-loading closure; credentials stay in the existing
-connection owner. Clearing the connection invalidates outstanding feature
-requests before their results can repopulate the new session.
-
-A running relay GET is a snapshot, not necessarily a complete JSON document or
-SSE event. The phone reconciles before acknowledging. Raw provider response
-bytes remain preserved; neither this split nor packaging filters provider output.
-
-Validation includes the actual v0.31.4 installer fixture with the new payload,
-retained state and successful startup, ordinary installers, state recovery,
-project concurrency and Console feature projection tests. New-installer tests
-alone are not sufficient evidence for an installed-upgrader path.
-
-## Collaborator residences
-
-A phone room may associate a computer identity without delegating phone execution.
-The phone owns this presentation relationship and a cached directory; Host remains
-the only writer of computer profiles, conversation history, cognition and task state.
-Profile PUT uses expectedRevision, and DELETE retains a tombstone. Active computer
-turns or phone execution grants block deletion. Repeated deletion returns the same
-receipt; deleted identities reject new mutations and work admission.
-
-`residence-reading.mjs` owns the separate source-labelled phone reading projection.
-PUT cognition/phone-reading accepts the paired phone's monotonic relationship generation
-and revision; the self tool aru_phone_memory_read returns the last supplied timestamp
-and records as read-only material, never as current computer memory or a live phone read.
-Disabling clears projected content and stale uploads cannot re-enable it. The old
-memory-sync endpoint returns 410 before any mutation. Existing copied memories are
-preserved. Ordinary mobile replica reads no longer expose memories or references;
-execution snapshots remain owned by the separate delegation chain.
-
-
-2026-09-23 validation: residence reading and mobile replica suites pass (6 tests); cognition smoke and generated runtime checks pass. Host Core bundle loads with an isolated `--check-state` data directory; Linux release archive keeps the existing fixed filename set. These are local implementation/package checks, not a deployed-node or phone integration claim. Existing saved cognition remains unchanged; legacy memory-sync is retired with HTTP 410.
-
-The cognition source now lives in `src/cognition/`; the existing runtime generator assembles cognition and residence reading into the fixed `collaborator-cognition.mjs` deployment artifact. This preserves the already-shipped fixed-list installer contract without a runtime fallback. The old 0.31.4 installer fixture and reading/replica tests pass together (7 tests); the isolated macOS installer smoke also passes. Do not add a separate runtime dependency on residence-reading.mjs to deployed cognition.
-
-## Installation, identity and recovery (2026-09-25)
-
-A phone and a Host each own their durable content; pairing is a connection to
-those identities, not permission to recreate collaborators or conversations.
-Network addresses are routes, not identities. A repaired connection must either
-prove the same owner or ask the person to choose; a missing fact is not evidence
-of an old version or an empty data store.
-
-Installation source records describe what was installed. They are not an
-implicit update pin. `upgrade` resolves the latest stable release; `--ref` chooses
-only this invocation. The target installer runs the data admission checks before
-switching the executable. All release install paths put the same release metadata
-beside Core. Development source with no reliable version remains unknown.
-
-Internal data-shape changes use a one-time migration into one canonical form.
-Unidentifiable connections retain their content and expose an explicit reconnect
-or local-removal action. Platform-specific key stores and externally distributed
-sender bundles are actual interoperability boundaries, not temporary internal
-formats: changing the phone cannot update a script already copied elsewhere.
-
-For VPS installations the provider-secret owner uses a service-private directory
-outside exported Host data. AES-256-GCM ciphertext and a persistent local master
-key are protected by service-user filesystem permissions. This protects exported
-content and other OS users; it does not protect against root or compromise of the
-Host service user. It is not advertised as a hardware-backed keyring. Desktop
-Linux remains on Secret Service; a temporary keyring outage never selects another
-backend. A missing/corrupt master key requires restoration, never silent rotation.
-
-Recovery checks follow real transitions: old install -> upgrade -> restart,
-failed upgrade -> retry, reconnect -> retry, remove -> late response, and missing
-key -> restore. Tests of new installs or a single field are insufficient evidence
-for those transitions. Local tests, OS service proof, device proof and published
-availability must be reported separately.
-
-## Live Host readiness and turn cancellation (2026-09-26)
-
-Installation receipts describe installed inputs. Core owns its current address,
-release manifest and runtime verification; Console renders those projections.
-`node-control.mjs` persists the revision-checked address policy. In automatic LAN
-mode `src/server/network-address.mjs` derives the advertised address from current
-interfaces on each read, without rewriting pairing identities or phone credentials.
-An explicit fixed address remains fixed. Old Windows receipts cannot distinguish
-manual addresses from detected ones, so they retain fixed mode until the user
-selects automatic LAN in Console. This is not automatic phone reconnection.
-
-Windows upgrade acceptance and Console startup compare the running Core release
-and retained Host identity with the intended installation. A protocol identifier
-such as `stub-0.30` is never an installed release label. A responding wrong release
-may trigger one bundled repair; an identity mismatch does not authorize replacement.
-
-`src/server/container-readiness.mjs` owns one coalesced verification attempt in
-Core's service environment. It uses the shared container verifier and exposes
-unconfigured, checking, ready or failed with the failure stage. Setup can prepare
-images; Core verification cannot pull images. Container job admission and capability
-advertisement require this receipt. A receipt is a completed check, not continuous
-proof that a runtime cannot subsequently fail. Console can explicitly retry it.
-
-The owner retains execution failure stage, executable, image and stderr for the
-current attempt. `GET /aru/v1/container-runtime` projects these private diagnostics
-only to an authenticated loopback `host-console`; the public manifest retains its
-generic readiness message. Windows/Linux Console reads the private projection only
-after a failed check or readiness deadline, with a bounded diagnostic request.
-Starting a new attempt clears the previous failure. Writable mounts omit the bare
-`rw` field rejected by Docker's `--mount` parser; the default is writable for both
-supported engines. Verification and actual workspace/plugin execution use that
-same syntax and retain existing sandbox limits.
-
-The conversation owner persists cancellation state and publishes `canCancel`.
-`src/conversations/turn-execution.mjs` holds one turn's startup receipt, abort signal
-and outstanding tools. Cancellation waits for driver termination and admitted tools
-to settle. Codex RPC acknowledgement alone is not termination. A bounded control
-wait exposes an unconfirmed stop and retry while retaining occupancy; it never
-limits normal model generation or kills other conversations' shared driver.
-Callbacks remain bound to their original turn, and late results cannot change the
-next turn. Deletion remains blocked while stop is unconfirmed. Console and phone
-render this owner state; older distributed Hosts retain the phone's existing
-running-state cancellation affordance when `canCancel` is absent.
-
-
-## Replica execution storage
-
-`src/host/replica-record-store.mjs` owns atomic record publication and recovery.
-The mobile replica scheduler remains the only authority for admission, execution
-outcome and delivery settlement. The store receives those records; it never chooses
-whether to retry or reconcile a model operation. `records-v2/scheduler.json` contains
-rule/configuration state, not historical generated bodies. Execution/delivery files
-retain identity-scoped results; lightweight indexes serve running work, unacknowledged
-results, unreflected continuation and paged history. Page requests list index names
-but read at most the requested page bodies. Per-owner filename indexes still grow;
-this is not a constant-time database index or a migration of all Host state.json data.
-
-Transactions are redo-only storage publication: persist the transaction, publish its
-record/index files and scheduler snapshot, then remove the journal. An in-process
-write failure blocks further store access until restart reconciliation. Legacy data
-is copied completely before activation and retained as a recovery backup. This format
-works on Node 18 without adding a native SQLite dependency. The older experimental
-whole-Host SQLite branch requires Node 22.13+ and is archived separately; it is not
-silently introduced as an installation prerequisite.
-
-Conversation attachment storage and driver request projections have separate source
-modules; the existing fixed conversation deployment payload still contains them.
-Mac protocol declarations are grouped by surface. HTTP response handling and MCP
-session/catalog retrieval have separate stateless helpers; Console remains the owner
-of credential selection and observable connection state.
-
-## Connection-address settings
-
-`src/host/node-control.mjs` owns the durable, revision-checked additional origins
-inside node settings. Server manifest assembly consumes its route projection;
-Console only edits drafts and submits changes. The primary installation route is
-retained. Additional Tailscale/HTTPS origins can be added and explicitly removed;
-older name-only updates preserve them. `HostNodeSettingsEditor` renders this
-contract, and `HostConsoleRuntime` checks a public manifest against the connected
-Host identity without forwarding credentials. There is no interface polling,
-automatic tunnel setup, or implicit route deletion. macOS installation retains
-container configuration independently of runtime readiness.
-
-Windows/Linux Console uses `desktop-console/src/connection-settings.mjs` for
-the remote-address draft and submission surface. The existing node-settings owner
-continues to own durable additional transports and revision admission; Console
-does not replace the primary LAN route or infer a public IP. The preload exposes
-an explicit address-check IPC. Main validates the origin using
-`connection-address.mjs`, reads the local Core identity, and requests only the
-candidate's public manifest without credentials, cookies or redirects. Its
-deadline includes body reading. A failed check retains the draft; a save uses the
-node-settings revision and only publishes the admitted response. This is source
-implementation, not published installer or phone-network acceptance.
-
-## Incremental backup recovery points (2026-10-05)
-
-`src/server/backup-snapshot-store.mjs` owns the random repository salt, per-device
-durable draft, immutable encrypted chunks, published manifest references and deletion
-tombstones. `backup-snapshot-routes.mjs` exposes paired-device transfer under
-`/aru/v1/backups/snapshots`; manifest capability `incrementalVersion: 1` admits it.
-Legacy inventory stays unchanged unless a Console requests `includeSnapshots=1`.
-Retention and MCP inventory/deletion combine both owners without duplicating state.
-Root byte size and logical content size are distinct; Console snapshot restoration
-is handed to Aru, which has the password and verifies all dependencies.
-
-Fault tests reopen disk state after reference, chunk, manifest and publication
-writes; cover shared-reference deletion, damaged indexes, yielding commit cancellation,
-deleted-root retries and exact replay. The local HTTP fixture proves first/incremental
-transfer and lost receipts against native restore. Source tests are not evidence of
-installed Host upgrade, Windows filesystem durability or real-phone background survival.
-
-`backup-snapshot-references.mjs` owns draft-only append journals and atomic durable
-length checkpoints. Existing immutable chunk admission is batched, avoiding full
-content reads until commit. `backup-snapshot-store.mjs` remains the only authority
-for publishing complete snapshots and collecting unreferenced ciphertext. Repository
-metadata advertises batch admission and snapshot v2; Host never interprets plaintext
-record boundaries or obtains the client's backup password.
-
-### Source plugin credits
-
-The workshop accepts optional `publisher` as self-declared author credit and keeps
-it in the draft and installed manifest. Source reads return the same value. An
-omitted field from an older client preserves existing credit; older uncredited
-drafts retain the historical `Aru workshop` default. The Console edits this field
-without creating an identity registry or granting permissions.
-
-The paired-device `GET /aru/v1/mobile-collaborator-execution-grants?executor=...`
-projects source collaborator identity and epoch from the existing replica owner.
-It does not create a grant registry or infer revocation from rule counts. It supports
-recovering a delegated executor after a phone residence link disappears. Revocation
-continues to use the existing source/epoch endpoint; executor deletion still rejects
-any remaining grant, including one admitted after the client read the inventory.
+Original desktop/full Host source and generated fixed filenames remain available
+as historical source; they are excluded from this fork's install, package and CI
+main path. [Historical architecture](upstream/architecture.md) describes that
+upstream implementation. Full source cleanup is deferred local work.
