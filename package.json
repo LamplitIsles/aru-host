@@ -1,0 +1,21 @@
+{
+  "name": "@lamplitisles/aru-cfl-host",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/cfl/cli.mjs",
+    "build": "tsc -p vendor/lamplit-contracts/tsconfig.build.json && node tools/build-cfl.mjs",
+    "test": "node --test tests/cfl-*.test.mjs"
+  },
+  "dependencies": {
+    "@lamplit/contracts": "./vendor/lamplit-contracts",
+    "sharp": "^0.35.5",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,3 +1,6 @@
+> Historical upstream full-Host documentation. This fork uses the CFL adapter;
+> consult the repository README and current operator reference for supported operations.
+
 # 把电脑里的协作者接到手机上 🌙
 
 欢迎来到 Aru Host。你可以把它想成 Aru 在电脑里的小房间：Aru 把完整的对话、页面和运行状态留在这里，手机则是一扇随时可以推开的窗。第一次让两边认识以后，不需要每天重新配置，也不用自己填写端口、密钥或 MCP JSON。
