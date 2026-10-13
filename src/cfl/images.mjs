@@ -115,6 +115,7 @@ export function createImages(directory) {
           [];
         for (const message of messages)
           for (const attachment of message.attachments ?? []) {
+            attachment.createdAt = message.createdAt;
             if (attachment.availability === "missing") {
               attachment.byteCount = null;
               attachment.sha256 = null;
@@ -136,9 +137,7 @@ export function createImages(directory) {
               metadata = { byteCount: bytes.length, sha256: digest(bytes) };
               state.put(key, metadata);
             }
-            Object.assign(attachment, metadata, {
-              createdAt: message.createdAt,
-            });
+            Object.assign(attachment, metadata);
           }
       },
       async route(req, res, suffix, device) {

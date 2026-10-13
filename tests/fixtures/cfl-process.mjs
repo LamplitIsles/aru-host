@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import sharp from "sharp";
+import { messages } from "./aru-wire.mjs";
 import { digest } from "../../src/cfl/state.mjs";
 import { fixture } from "./cfl-chat.mjs";
 
@@ -135,6 +136,7 @@ export async function processAcceptance(entry, directory) {
     }
     assert.equal(upstream.submissions, 1);
     const page = await request(root + "/messages");
+    messages(page.messages);
     const attachments = page.messages.at(-1).attachments;
     assert.equal(attachments.length, 4);
     for (let i = 0; i < attachments.length; i++) {

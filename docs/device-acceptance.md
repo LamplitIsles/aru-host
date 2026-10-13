@@ -15,7 +15,10 @@ private network addresses or chat bodies in shared evidence.
    appears with CFL name/avatar; one existing conversation appears, with no new
    native session created. Record what unsupported creation/edit UI does.
 2. Open existing fixture history; scroll through multiple pages and back down.
-   Check stable order, original timestamps, independent completion bubbles and
+   Check that initial events and later sync deltas decode without
+   `events.index 0.at` errors; event `at` is emission time, while message
+   `createdAt` preserves source time. Check stable order, original timestamps,
+   independent completion bubbles and
    labelled reminder/other-channel inputs. Confirm no false empty cognition view.
 3. Send text, then send another input during held generation. Check whether the
    released phone UI allows steering; verify CFL sees original start/steer, not a

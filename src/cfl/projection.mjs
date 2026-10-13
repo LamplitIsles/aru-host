@@ -101,7 +101,7 @@ export function createProjection(state) {
         events.push({
           sequence: ++cursor,
           kind: "message.updated",
-          createdAt: Date.now(),
+          at: Date.now(),
           payload: { messageId: row.messageId, turnId: row.turnId },
           row,
         });
@@ -127,7 +127,7 @@ export function createProjection(state) {
       events.push({
         sequence: ++cursor,
         kind: "turn.updated",
-        createdAt: Date.now(),
+        at: Date.now(),
         payload: { turnId: ref("turn", view.activeTurnId) },
       });
     events = events.slice(-512);

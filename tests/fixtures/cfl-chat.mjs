@@ -188,6 +188,11 @@ export async function fixture({ images = false } = {}) {
       messages.push(...rows);
       for (const f of listeners) f();
     },
+    complete(rows) {
+      activeTurnId = null;
+      messages.push(...rows);
+      for (const f of listeners) f();
+    },
     replaceSession() {
       sessionId = "different-session";
       for (const f of listeners) f();
